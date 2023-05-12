@@ -66,7 +66,7 @@ private:
 		std::thread master; //Master, ger ut arbete åt threads på samma gang man gör annat skit
 		bool running;
 
-		void n_master_task()
+		void n_master_task() // janky asf
 		{
 			while (this->running) {
 				//this->mutexPool.lock();

@@ -15,8 +15,9 @@ struct n_params{
 	std::string html_data;
 };
 
+//ska data ska parsas
 void handle_request(struct n_params param) { //main entry point for threads
-	std::cout << "handle_request\n";
+
 }
 
 #endif
