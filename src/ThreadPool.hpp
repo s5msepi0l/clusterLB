@@ -34,7 +34,7 @@ public:
 		std::cout << "Constructor activated\n";
 	}
 
-	unsigned int execute(struct n_params param) //return task queue storlek
+	unsigned int execute(struct n_params param) //return task queue size
 	{
 		this->n_queue.push_back(param);
 
@@ -63,10 +63,11 @@ private:
 		std::vector<std::thread> pool; //Slave
 
 		std::mutex mutexPool;
-		std::thread master; //Master, ger ut arbete åt threads på samma gang man gör annat skit
+		std::thread master; //Master, gives slaves work to do while the main thread does other shit
 		bool running;
 
-		void n_master_task() // janky asf
+		//this is fucking stupid
+		void n_master_task()
 		{
 			while (this->running) {
 				//this->mutexPool.lock();
