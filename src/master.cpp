@@ -73,7 +73,7 @@ int main() {
 		if (strcmp((const char *)buf, global_response.c_str()) == 0) {
 			nodes.push_back({socket_buffer, 0});
 			active_nodes++;
-			std::cout << "yes\n";
+			std::cout << "[*]Node connection received\n";
 		}
 	}
 	delete[] (buf);
