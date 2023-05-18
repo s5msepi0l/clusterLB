@@ -1,13 +1,14 @@
 #include <iostream>
 #include <random>
 #include <vector>
+#include <cstring>
+#include <string>
+
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 
-#include <cstring>
-#include <string>
 #include "networking.hpp"
 
 #define uint_64 unsigned long
@@ -15,6 +16,7 @@
 //....
 #define status 0x100
 #define handle 0x200
+#define recv_timeout 500
 
 static int optval = 1;
 /*
@@ -51,8 +53,14 @@ int main() {
 	if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(int)) < 0 ) {
 		throw std::runtime_error("Couldn't reuse port, for whatever reason");
 	}
-	struct sockaddr_in server;
 
+	//recv timeout setting's shouldn't interfere with the above statement
+	struct timeval tv;
+	tv.tv_sec = recv_timeout;
+	tv.tv_usec = 0;
+	setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
+
+	struct sockaddr_in server;
 	server.sin_family = AF_INET;
 	server.sin_port = htons(12354);
 
@@ -73,7 +81,7 @@ int main() {
 		if (strcmp((const char *)buf, global_response.c_str()) == 0) {
 			nodes.push_back({socket_buffer, 0});
 			active_nodes++;
-			std::cout << "[*]Node connection received\n";
+			std::cout << "yes\n";
 		}
 	}
 	delete[] (buf);
