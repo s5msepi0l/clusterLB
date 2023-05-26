@@ -16,12 +16,12 @@
 #include <mutex>
 #include <thread>
 
+#include "cache.hpp"
+
 #define uint_128 unsigned long long int
 #define BUFFER_SIZE 8192
 
 static int optval = 1;
-static int monitor_rate = 5;
-static int exparation_rate = 5;
 std::mutex mutexpool;
 /*
 	file contents fetcher from another node via tcp due to spoofin vulnurabilities in udp based connections
@@ -62,26 +62,23 @@ char *fetch(char *path)
 class n_src_cli
 {
 public:
-	n_src_cli(std::string source, unsigned short port) : addr(source), port(port)
+	n_src_cli(std::string source, unsigned short port) : addr(source), port(port), cache(20)
 	{
 		sock_init(source, port);
-
-		this->cache = NULL;
-
-		this->monitor = std::thread(&n_src_cli::monitor_cache, this);
+		
 	}
 
 	//seamless request source documents from loadbalancer 
 	char *get(std::string filename)
 	{
-		if (this->cache_content == filename)
-		{
-			this->cache_set = std::clock();
-			return this->cache;
-		}
-		this->cache_content = filename;
+		char *mem = this->cache.get((char*)filename.c_str());
+
+		if (mem != nullptr)
+			return mem;
 		
-		std::cout << connect(this->socket_fd, (struct sockaddr*)&this->server, (socklen_t)sizeof(this->server)) << " 0ndawdsad\n";
+		//this->cache_content = filename;
+		
+		std::cout << "connect: " << connect(this->socket_fd, (struct sockaddr*)&this->server, (socklen_t)sizeof(this->server)) << "\n";
 			//throw std::runtime_error("unable to connect to desired source\n");
 	
 		if (send(this->socket_fd, (const void *)filename.c_str(), filename.size(), 0) < 0) {
@@ -96,25 +93,22 @@ public:
 			return NULL;
 		}
 		tmp[recv_amt] = '\0';
-		this->cache_size = sizeof(tmp) + 1;
-		this->cache = new char[this->cache_size];
-		std::strcpy(this->cache, tmp);
+		
+		this->cache.insert_h(tmp, (char*)filename.c_str());
+
 		delete[] tmp;
+
 		close(this->socket_fd);
 		sock_init(this->addr, this->port);
-		return this->cache;
+		
+		return this->cache.get((char*)filename.c_str());
 	}
 
 	void exit()
 	{
-		mutexpool.lock();
-		this->thread_running = false;
-		mutexpool.unlock();
+		std::cout << "Destructor\n";
 
-		if (this->monitor.joinable())
-			this->monitor.join();
-
-		delete[] this->cache;
+		this->cache.~Cache();
 	}
 
 private:
@@ -124,35 +118,11 @@ private:
 	int socket_fd;
 	struct sockaddr_in server;
 
+	Cache cache;
+
 	struct timeval tv = {
 	 .tv_sec = 2 
 	};
-	
-	//chaching using c style string's for ease of use, conveniance and slight performance gains 
-	char *cache;
-	uint_128 cache_size;
-	std::string cache_content;
-	clock_t cache_set = clock();
-
-	bool thread_running = true;
-	std::thread monitor;
-
-	//cache expiration date checking
-	void monitor_cache()
-	{
-		while (this->thread_running)
-		{
-			int diff = int(clock() - this->cache_set);
-			if (diff <= exparation_rate)
-			{
-				delete[] this->cache;
-				this->cache_content.erase();
-				this->cache_size = 0;
-			}
-
-			std::this_thread::sleep_for(std::chrono::milliseconds(monitor_rate * 1000)); //as to not waster cpu cycles
-		}
-	}
 
 	void sock_init(std::string source, int port)
 	{
@@ -162,7 +132,7 @@ private:
 		this->server.sin_port = htons(port);
 		this->server.sin_addr.s_addr = inet_addr(source.c_str());
 
-		if (setsockopt(this->socket_fd, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(int)) < 0) 
+		if (setsockopt(this->socket_fd, SOL_SOCKET, SO_REUSEPORT | SO_REUSEADDR, &optval, sizeof(int)) < 0) 
 			throw std::runtime_error("unable to reuse db port\n");
 	}
 
@@ -194,7 +164,7 @@ public:
 
 		//reuse port
 		//setsockopt(this->socket_fd, SOL_SOCKET, SO_RCVTIMEO, &this->tv, sizeof(this->tv));
-		setsockopt(this->socket_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(int));
+		setsockopt(this->socket_fd, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(int));
 		
 		std::cout << bind(this->socket_fd, (struct sockaddr*)&this->server, (socklen_t)sizeof(this->server)) << "\n";
 		listen(this->socket_fd, 256);
