@@ -1,5 +1,5 @@
 #include <iostream>
-#include <sys/time.h>
+#include <ctime>
 #include <cstring>
 #include <vector>
 #include <chrono>
@@ -9,141 +9,160 @@
 #include <unistd.h>
 
 #define uint_128 unsigned long long int
-#define monitor_rate 300 //5min
-#define expiration_rate_m 120
+#define monitor_rate 10 //1 min
+#define expiration_rate_m 300 //5 main
 
 /*
 caching is done via nodes that "expire" after a set amount of time,
 monitored from a seperate thread running in the background
 */
 
-class cache
-{
-public:
-	cache(int bucket, uint_128 expiration) : bucket_size(bucket)
-	{
-		for (int i = 0; i<this->bucket_size; i++)
-		{
-			this->bucket[i] = {NULL, NULL, 0, 0, NULL};
-		}
-
-		this->monitor_cache = std::thread(cache::monitor_cache, this);
-	}
-
-	int insert(char *content, char *path)
-	{
-		int index = hash(path);
-
-		for (int i = 0;; i++)
-		{
-			if (bucket[i].path == NULL)
-			{
-				//might be interpreted as the sizeof the first char, might need some refactoring
-				struct cache_node buf = {content, path, sizeof(content), clock_t(), NULL};
-
-				//buf memory might be corrupted because it is a rvalue
-				std::memcpy(&bucket[index], (const void*)&buf, sizeof(buf));
-				
-				return 0;
-			}
-		}
-
-		return 0;
-	}
-
-
-private:
-	std::thread cache_monitor;
-	bool thread_running;
-	std::mutex mutex_p;
-
-	void monitor_cache()
-	{
-
-		while (this->thread_running){	
-			std::this_thread::sleep_for(std::chrono::milliseconds(monitor_rate * 1000));
-		
-			for (int i = 0; i<this->bucket.size(); i++)
-			{
-				//index control so it doesn't fuck everything up
-				this->mutex_p.lock();
-				if ((float(clock_t()) - float(this->bucket.at(i).set)) >= expiration_rate_m);
-				{
-					this->mutex_p.unlock();
-
-					//clear local cache
-					delete[] this->bucket[i].content;
-				} else{
-					this->mutex_p.unlock();
-				}
-				
-			}
-		}
-	}
-
+struct Node {
+	char *content;
+	char *path;
+	std::chrono::system_clock::time_point set;
 };
 
-//incase of hashmap collision's it will basically just search for a empty cell (yes it's slow as fuck)
-class cache_map {
-
+class Cache
+{
 public:
-	cache_map(int bucket_sz) : bucket_sz(bucket_size)
+	Cache(int bucket_sz) 
+	: bucket_size(bucket_sz)
 	{
+		this->bucket.resize(bucket_sz);
+
+		this->thread_running = true;
+		this->cache_monitor = std::thread(&Cache::monitor_cache, this);
 	}
 
-	//this piece of shit need's jesus
-	int insert_h(struct cache_node node, std::vector<struct cache_node> *lst)
+	~Cache()
 	{
-		int index = hash_h(node.path);
+		this->mutex_p.lock();
+		this->thread_running = false;
+		this->mutex_p.unlock();
 
-		if (lst[i].path != NULL) 
+		if (this->cache_monitor.joinable())
 		{
-			//travel through linked list until an empty
-			//every iteration makes curr_node the head node low spacecomplexity
-			struct cache_node *curr_node = &lst[i];
-			for(int i = 0;;i++)
+			this->cache_monitor.join();
+		}
+
+		//clear cache
+		for (int i = 0; i<this->bucket.size(); i++)
+		{
+			for (int j = 0; j<this->bucket[i].size(); j++)
 			{
-				if (lst.next == NULL) //chain end reached
-				{
-					curr_node.cache.content = new char[sizeof(node.content)+1]; //+1 byte for null terminator
-					break;
-				}
-				curr_node = currnode.cache_node; //move one chain up
+				delete[] this->bucket[i][j].content;
+				delete[] this->bucket[i][j].path;
+			}
+		}
+
+		this->bucket.clear();
+		std::cout << "Destructor\n";
+	}
+
+	int insert_h(char *cache, char *path)
+	{
+
+		int index = hash(path);
+		std::cout << index << "dwada\n";
+		//sligtly faster than just iterating normaly as it doesn't have to increment and keep track of an int
+
+		if (this->bucket[index].empty())
+		{
+			this->bucket[index].resize(1);
+		}
+
+		if (this->bucket[index][0].path == nullptr)
+		{
+			this->bucket[index][0].path = new char[strlen(path)+1];
+			this->bucket[index][0].content = new char[strlen(cache)+1];
+			
+			strcpy(this->bucket[index][0].path, path);
+			strcpy(this->bucket[index][0].content, cache);
+				
+			this->bucket[index][0].set = std::chrono::system_clock::now();
+			return 0;
+		}
+
+		for (int j = 0;; j++)		
+		{
+			if (this->bucket[index][j].path == nullptr)
+			{
+				this->bucket[index][j].path = new char[strlen(path)+1];
+				this->bucket[index][j].content = new char[strlen(cache)+1];
+				strcpy(this->bucket[index][j].path, path);
+				strcpy(this->bucket[index][j].content, cache);
+				this->bucket[index][j].set = std::chrono::system_clock::now();
+				
+				return -1;
 			}
 		}
 	}
 
-	~cache_map()
+	//nullptr if desired node is not found
+	char *get(char *key)
 	{
-		//implement me
-		//should clear all present buffers out of memory
+		int index = hash(key);
+		
+		for (int i = 0; i<this->bucket[index].size(); i++)
+		{
+			if (std::strcmp(this->bucket[index][i].path, key) == 0) //if pair is found return cache or if cell is empty return NULL
+			{
+				std::cout << "get\n";
+				this->bucket[index][i].set = std::chrono::system_clock::now();
+				return this->bucket[index][i].content;	
+			}
+		}
+
+		return nullptr;
 	}
+
 private:
-	std::vector<cache_node> bucket;
+	std::vector<std::vector<struct Node>> bucket;
 	int bucket_size;
 
-	//pseudo random number generator
-	unsigned int hash_h(char *key)
+
+	std::thread cache_monitor;
+	std::mutex mutex_p;
+	bool thread_running;
+
+	unsigned int hash(char *key)
 	{
 		int len = strlen(key);
-		int hash = 0;
+		int hash = 1;
 
 		for (int i = 0; i<len; i++)
 		{
-			hash *= i;
-			hash %=	bucket_size;
+			hash += i;
+			hash *= hash;
 		}
-
-		return hash;
+		return hash % this->bucket_size;
 	}
 
-	//  linked list incase of hashmap collision  //
-	struct cache_node{
-		char *content;
-		char *path;
-		uint_128 size;
-		clock_t set;
 
-		struct cache_node *next;
-	};
+	void monitor_cache()
+	{
+		while (this->thread_running)
+		{
+			this->mutex_p.unlock();
+
+			std::this_thread::sleep_for(std::chrono::milliseconds(monitor_rate * 1000));
+			for (int i = 0;i<this->bucket.size(); i++)
+			{
+				for (int j = 0; j<bucket[i].size(); j++)
+				{
+					//amount of time since the cache was last accesed
+					if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now() - this->bucket[i][j].set).count() >=expiration_rate_m)
+					{
+						delete[] this->bucket[i][j].path;
+						delete[] this->bucket[i][j].content;
+						std::swap(this->bucket[i][j], this->bucket[i].back());
+						this->bucket.pop_back();
+					}
+				}
+			}
+		}
+
+		this->mutex_p.lock();
+	}
 };
