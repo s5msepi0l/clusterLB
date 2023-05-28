@@ -3,6 +3,7 @@
 #include <vector>
 #include <cstring>
 #include <string>
+#include <map>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -13,38 +14,137 @@
 
 #define uint_64 unsigned long
 
-//....
-#define status 0x100
-#define handle 0x200
-#define recv_timeout 500
-
 static int optval = 1;
-/*
-	TODO:
-		multithreading för client response
-		token routing
-*/
+
 struct Node{
 	int socket_fd;
-	int used_resources;
+	int activeResources;
 };
 
 struct Client {
-	int socket_fd;
 	uint_64 auth_token;
 	std::string message;
 };
+
+
+void traffic_routing(std::vector <struct Node> &socket)
+{
+	char buffer[BUFFER_SIZE];
+
+    while (true) {
+        fd_set readSet;
+        int maxDescriptor = -1;
+        FD_ZERO(&readSet);
+
+        // Add client sockets to the set
+        for (int i = 0; i<socket.size(); i++) {
+            FD_SET(socket[i].socket_fd, &readSet);
+            maxDescriptor = std::max(maxDescriptor, socket[i].socket_fd);
+        }
+
+        // Use select to monitor the sockets for activity
+        int activity = select(maxDescriptor + 1, &readSet, nullptr, nullptr, nullptr);
+        if (activity == -1) {
+            std::cerr << "Error in select" << std::endl;
+            break;
+        }
+
+        // Check for activity on client sockets
+        for (auto it = sockets.begin(); it != sockets.end(); ++it) {
+            int clientSocket = *it;
+            if (FD_ISSET(clientSocket, &readSet)) {
+                // Receive data from the client socket
+                int bytesRead = recv(clientSocket, buffer, BUFFER_SIZE, 0);
+                if (bytesRead == -1) {
+                    std::cerr << "Error in recv" << std::endl;
+                    // Handle error or close the client socket
+                    // ...
+                } else if (bytesRead == 0) {
+                    std::cout << "Client disconnected" << std::endl;
+                    // Close the client socket and remove it from the vector    char buffer[BUFFER_SIZE];
+
+    while (true) {
+        fd_set readSet;
+        int maxDescriptor = -1;
+        FD_ZERO(&readSet);
+
+        // Add client sockets to the set
+        for (const auto& clientSocket : clientSockets) {
+            FD_SET(clientSocket, &readSet);
+            maxDescriptor = std::max(maxDescriptor, clientSocket);
+        }
+
+        // Use select to monitor the sockets for activity
+        int activity = select(maxDescriptor + 1, &readSet, nullptr, nullptr, nullptr);
+        if (activity == -1) {
+            std::cerr << "Error in select" << std::endl;
+            break;
+        }
+
+        // Check for activity on client sockets
+        for (auto it = clientSockets.begin(); it != clientSockets.end(); ++it) {
+            int clientSocket = *it;
+            if (FD_ISSET(clientSocket, &readSet)) {
+                // Receive data from the client socket
+                int bytesRead = recv(clientSocket, buffer, BUFFER_SIZE, 0);
+                if (bytesRead == -1) {
+                    std::cerr << "Error in recv" << std::endl;
+                    // Handle error or close the client socket
+                } else if (bytesRead == 0) {
+                    std::cout << "Client disconnected" << std::endl;
+                    // Close the client socket and remove it from the vector
+                    close(clientSocket);
+                    clientSockets.erase(it);
+                    --it;
+                } else {
+                    // Process the received data
+                }
+            }
+        }
+    }
+                    close(clientSocket);
+                    clientSockets.erase(it);
+                    --it;
+                } else {
+                    // Process the received data
+                    // ...
+                }
+            }
+        }
+    }
+}
+
+//this is fucking stupid, but it still works somehow...
+int node_selection(std::vector<Node> *nodes) {
+	int buffer, max = 0;
+	Node *n_buffer;
+	for (int i = 0; i<nodes->size(); i++) {
+		send((*nodes)[i].socket_fd, (const void *)status, sizeof(int), 0);
+		recv((*nodes)[i].socket_fd, &buffer, sizeof(int), 0);
+
+		if (buffer > max) {
+			max = buffer;
+			n_buffer = &(*nodes)[i];
+		}
+	}	
+	return n_buffer->socket_fd;
+}
 
 int main() {
 	//token generation: dist(rng) -> unsigned long
 	std::mt19937_64 rng(std::random_device{}());
 	std::uniform_int_distribution<uint_64> dist(0, std::numeric_limits<uint_64>::max());
 
+	/*
+		key = token, value = file descriptor
+		when a node responds to the load balancer, it routes the packet to the client via 
+		a token generation system
+	*/
+	std::map<uint_64, int> clients;
+
 	int active_nodes = 0;
-	std::vector<Node> nodes;
-	std::vector<Client> clients;
+	std::vector<Node> nodes;	
 	
-	char *buf = new char[BUFFER_SIZE];
 
 	int addrlen = sizeof(sockaddr_in) * sizeof(char);
 	int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -69,6 +169,7 @@ int main() {
 		throw std::runtime_error("reconnect your ethernet cable dipshit");
 	}
 
+	char *buf = new char[BUFFER_SIZE];
 	bool running = true;
 	int socket_buffer;
 
@@ -81,25 +182,18 @@ int main() {
 		if (strcmp((const char *)buf, global_response.c_str()) == 0) {
 			nodes.push_back({socket_buffer, 0});
 			active_nodes++;
-			std::cout << "yes\n";
+			std::cout << "Node connected\n";
+		} else {
+			clients[dist(rng)] = socket_buffer;
+			for (int i = 0; i<nodes.size(); i++)
+			{
+				nodes[i].activeResources = n_status_check(nodes[i].socket_fd);
+			}
+			int tmp = node_selection(&nodes);
+			send(tmp, buf, strlen(buf)+1, 0);
+
 		}
 	}
 	delete[] (buf);
 	return 0;
-}
-
-//this is fucking stupid, but it still works somehow...
-Node *node_selection(std::vector<Node> *nodes) {
-	int buffer, max = 0;
-	Node *n_buffer;
-	for (int i = 0; i<nodes->size(); i++) {
-		send((*nodes)[i].socket_fd, (const void *)status, sizeof(int), 0);
-		recv((*nodes)[i].socket_fd, &buffer, sizeof(int), 0);
-
-		if (buffer > max) {
-			max = buffer;
-			n_buffer = &(*nodes)[i];
-		}
-	}	
-	return n_buffer;
 }
